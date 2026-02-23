@@ -20,6 +20,5 @@ venv/
 # Large processed data (> 100MB GitHub limit)
 processed/charge_5min/
 processed/charge_1hour/
-processed/zone_hourly_volume_long.csv
 
 # Keep small outputs like zone_model_results.csv (36K)
