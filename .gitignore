@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+__MACOSX/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Large raw dataset directories (too large for GitHub)
+20220901-20230228_station-raw/
+20220901-20230228_zone-cleaned-aggregated/
+
+# Large processed data (> 100MB GitHub limit)
+processed/charge_5min/
+processed/charge_1hour/
+processed/zone_hourly_volume_long.csv
+
+# Keep small outputs like zone_model_results.csv (36K)
