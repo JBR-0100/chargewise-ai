@@ -25,9 +25,9 @@ aiml/
 # Large processed data (> 100MB GitHub limit)
 processed/charge_5min/
 processed/charge_1hour/
-processed/zone_hourly_volume_long.csv
 
-# Keep small outputs like zone_model_results.csv (40K)
+# Keep outputs like zone_hourly_volume_long.csv (53MB) and zone_model_results.csv (40K)
+# so the app "just works" for the instructor.
 
 # Diagnostic / scratch scripts
 diagnose_models.py
