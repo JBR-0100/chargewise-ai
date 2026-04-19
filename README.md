@@ -93,10 +93,3 @@ streamlit run app.py
 *Note: For first-time setups, ensure you have the processed CSVs in the `processed/` directory, or run `python preprocess_run.py` to regenerate the baseline records.*
 
 ---
-
-## Feedback Resolution
-This version of ChargeWise AI incorporates full resolution of Milestone 1 feedback, including:
-- **Full Training Pipeline**: Implemented with MAE/RMSE/R2 metrics.
-- **Model Robustness**: Verified via 5-fold cross-validation.
-- **Advanced Visuals**: Added system-wide heatmaps and peak analysis grids.
-- **Interactive UI**: Added future-time selection and interactive site report generation.
