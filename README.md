@@ -1,3 +1,5 @@
+<img width="1476" height="842" alt="image" src="https://github.com/user-attachments/assets/8d818dbf-329a-4ea7-a7da-38a9b5c46fa1" />
+
 # ChargeWise AI 
 
 **Intelligent EV Charging Demand Prediction & Agentic Infrastructure Planning.**
@@ -65,6 +67,7 @@ chargewise-ai/
 ```
 
 ---
+
 
 ## Setup & Usage
 
