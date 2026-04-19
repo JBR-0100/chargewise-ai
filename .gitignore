@@ -31,6 +31,7 @@ processed/zone_hourly_volume_long.csv
 
 # Diagnostic / scratch scripts
 diagnose_models.py
+lib
 
 # IDE / Editor
 .idea/
