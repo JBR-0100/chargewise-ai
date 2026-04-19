@@ -1,4 +1,4 @@
-# ChargeWise AI ⚡
+# ChargeWise AI 
 
 **Intelligent EV Charging Demand Prediction & Agentic Infrastructure Planning.**
 
