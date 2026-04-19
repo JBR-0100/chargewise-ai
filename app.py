@@ -315,8 +315,8 @@ with tabs[1]:
             
             future_pred = model.predict_with_interval(future_df)
             
-            st.metric("Predicted Demand", f"{future_pred['prediction'][0]:.2f} kWh")
-            st.caption(f"Range: {future_pred['lower_bound'][0]:.1f} - {future_pred['upper_bound'][0]:.1f} kWh")
+            st.metric("Predicted Demand", f"{future_pred['prediction'].iloc[0]:.2f} kWh")
+            st.caption(f"Range: {future_pred['lower_bound'].iloc[0]:.1f} - {future_pred['upper_bound'].iloc[0]:.1f} kWh")
             st.info("Note: Future predictions use historical means for lag features.")
 
 
