@@ -1,0 +1,44 @@
+EV Infrastructure Planning Guidelines — Knowledge Base for ChargeWise AI
+
+SECTION 1: CHARGING STATION DENSITY STANDARDS
+Recommended density for urban areas is one Level 2 (AC) charging port per 5-10 EVs registered in a given zone. High-traffic commercial zones should target one DC fast charger (DCFC) per 20-30 EVs. The International Energy Agency (IEA) recommends a minimum ratio of 1 public charger per 10 EVs in dense urban environments to prevent range anxiety and address peak demand. Zones with high average occupancy above 85% are considered critically congested and require immediate infrastructure expansion.
+
+SECTION 2: PEAK DEMAND MANAGEMENT
+Peak EV charging demand typically occurs between 17:00 and 21:00 local time as commuters return home and plug in vehicles. Grid operators should implement time-of-use (TOU) pricing to shift discretionary charging to off-peak hours (23:00–06:00). Smart charging protocols (ISO 15118, OCPP 2.0.1) enable demand response by allowing grid operators to throttle charging rates during peak grid stress events. A demand charge reduction of 20-30% is achievable through coordinated smart charging programs in dense zones.
+
+SECTION 3: LOAD BALANCING STRATEGIES
+Transformer-level load balancing requires monitoring aggregate load across all chargers served by a single distribution transformer. When aggregate load exceeds 80% of transformer capacity, automatic load shedding or queuing should be triggered. Installing energy storage systems (ESS) at high-demand stations can reduce peak grid draw by up to 40% by pre-charging during off-peak hours and discharging during peak demand windows. Vehicle-to-Grid (V2G) technology enables parked EVs to feed power back to the grid, providing additional peak load relief.
+
+SECTION 4: STATION SITING AND PLACEMENT
+Optimal station placement should prioritize locations with the highest vehicle dwell times: shopping centers, workplaces, transit hubs, and residential parking structures. The gravity model of station placement considers population density, distance to existing stations, and local electricity grid capacity. Stations should be placed within 1km of at least one alternate station to ensure redundancy. High-load zones identified by predictive models should be prioritized for expansion within 6-12 months.
+
+SECTION 5: FAST CHARGER DEPLOYMENT
+DC fast chargers (50 kW to 350 kW) are most impactful at highway corridors and locations where dwell time is under 30 minutes. Deployments should be sized to local grid capacity: a 150 kW DCFC requires a dedicated 480V three-phase circuit with 300A service. Zones with evening peak demand above 500 kWh per hour should evaluate at least 2 DCFC units in addition to Level 2 infrastructure. Charging plazas with 4+ DCFC units should include a battery energy storage buffer to limit grid demand charges.
+
+SECTION 6: GRID INTEGRATION AND CAPACITY PLANNING
+Before installing new charging infrastructure, a grid impact study is required to assess transformer headroom. Distribution utilities typically require 60–120 days for grid upgrades. Zones with aging infrastructure (pre-2000 transformer installations) may require complete grid upgrades before adding high-power chargers. Coordinating with local utilities 12–18 months ahead of planned deployment is considered best practice. Microgrids with solar-plus-storage can reduce grid interconnection requirements by 30-50% in off-grid or constrained areas.
+
+SECTION 7: SCHEDULING RECOMMENDATIONS
+Workplace charging programs should implement scheduled charging that delays session start to off-peak periods when employees arrive. Reservation-based charging systems reduce idle time at stations by 25–35% compared to first-come first-served models. Dynamic pricing signals updated every 15 minutes improve load distribution and reduce peak congestion. Zones with high weekend demand should maintain minimum 50% charger availability on weekends and adjust pricing dynamically.
+
+SECTION 8: FORECASTING AND CAPACITY EXPANSION TRIGGERS
+Zone-level demand forecasting models should trigger expansion planning when predicted demand exceeds 80% of installed capacity for more than 3 consecutive weeks. A rolling 30-day forecast window should be used to issue early warning signals. Machine learning models (Ridge Regression, LSTM) trained on historical station occupancy and energy volume data provide actionable 24-hour ahead forecasts. Infrastructure planners should maintain a 20% capacity buffer above forecasted peak demand.
+
+SECTION 9: EQUITY AND ACCESSIBILITY
+At least 10% of new public charging installations should be in low-income or underserved communities as required by many state and national EV infrastructure programs. ADA-compliant spaces must be provided at all publicly accessible charging locations. Rural and suburban zones should prioritize Level 2 installations given lower average vehicle turnover rates. Community charging hubs combining solar canopies with charging infrastructure are encouraged in areas with limited grid access.
+
+SECTION 10: MAINTENANCE AND RELIABILITY
+Network uptime targets for public charging stations are typically 97% or higher per NEVI program requirements. Predictive maintenance schedules based on energy throughput thresholds (e.g., every 50,000 kWh dispensed per port) reduce unplanned downtime by 40%. Remote monitoring via OCPP backends enables real-time fault detection and faster technician dispatch. High-demand stations should have a minimum of one spare port per 4 operational ports to handle offline maintenance periods without reducing effective capacity.
+
+SECTION 11: REGULATORY AND COMPLIANCE
+EV charging stations must comply with UL 2594 (Level 2) or UL 2202 (DCFC) safety standards. NEVI Formula Program requires any federally funded DCFC station to have a minimum of 4 ports of at least 150 kW each and 97% uptime. ISO 15118 enables Plug and Charge (PnC) authentication for seamless and secure driver identification. Local building codes may require electrical permits and inspections before commissioning new installations.
+
+SECTION 12: REFERENCES AND STANDARDS
+- International Energy Agency, "Global EV Outlook 2023"
+- U.S. Department of Energy, National Electric Vehicle Infrastructure (NEVI) Formula Program Standards
+- ISO 15118: Road Vehicles — Vehicle to Grid Communication Interface
+- IEC 61851: Electric Vehicle Conductive Charging System
+- Open Charge Point Protocol (OCPP) 2.0.1 — Open Charge Alliance
+- ASHRAE/ACCA Standard 90.1: Energy Standard for Buildings (grid integration guidelines)
+- Rocky Mountain Institute, "EV Charging Infrastructure Planning Guide", 2022
+- BloombergNEF, "Electric Vehicle Outlook 2023"

@@ -6,9 +6,14 @@ __MACOSX/
 __pycache__/
 *.py[cod]
 *.egg-info/
+
+# Secrets & Environment
 .env
+
+# Virtual environments
 venv/
 .venv/
+aiml/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
@@ -20,5 +25,25 @@ venv/
 # Large processed data (> 100MB GitHub limit)
 processed/charge_5min/
 processed/charge_1hour/
+processed/zone_hourly_volume_long.csv
 
-# Keep small outputs like zone_model_results.csv (36K)
+# Keep small outputs like zone_model_results.csv (40K)
+
+# Diagnostic / scratch scripts
+diagnose_models.py
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.bbl
+*.blg

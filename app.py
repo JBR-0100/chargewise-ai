@@ -1,353 +1,486 @@
-"""
-EV Charging Demand Prediction — Streamlit Dashboard
-Milestone 1 UI requirement
-
-Run with:
-    streamlit run app.py
-"""
-\
+# ── Imports ─────────────────────────────────────────────────────────────────
 import os
-import glob
+import sys
 import warnings
+from datetime import datetime, timedelta, time
+
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file (GEMINI_API_KEY, etc.)
+
 import numpy as np
 import pandas as pd
+import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-\
+
+# Force non-interactive backend for matplotlib
+matplotlib.use("Agg")
+
+# Custom modules
+from agent.data_agent import compute_stats, load_zone_df, add_features
+from agent.ml_pipeline import CVDemandModel, FEATURES
+
 warnings.filterwarnings("ignore")
-\
-\
+
+# ── Paths ─────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CLEAN_DIR   = os.path.join(BASE_DIR, "processed")
 ZONE_CSV    = os.path.join(CLEAN_DIR, "zone_hourly_volume_long.csv")
 RESULTS_CSV = os.path.join(CLEAN_DIR, "zone_model_results.csv")
-RAW_DIR     = os.path.join(BASE_DIR, "20220901-20230228_station-raw")
-STATION_INFO_PATH = os.path.join(RAW_DIR, "station_information.csv")
-\
-\
-FEATURES = [\
-    "hour", "dayofweek", "month", "is_weekend", "season",\
-    "hour_sin", "hour_cos", "dow_sin", "dow_cos",\
-    "lag_1h", "lag_24h", "lag_168h", "roll_24h_mean",\
-]
-\
-\
-def add_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["hour"]       = df.index.hour
-    df["dayofweek"]  = df.index.dayofweek
-    df["month"]      = df.index.month
-    df["is_weekend"] = (df.index.dayofweek >= 5).astype(int)
-    df["season"]     = df["month"].map(\
-        {12: 0, 1: 0, 2: 0, 3: 1, 4: 1, 5: 1, 6: 2, 7: 2, 8: 2, 9: 3, 10: 3, 11: 3}\
-    )
-    df["hour_sin"]  = np.sin(2 * np.pi * df["hour"] / 24)
-    df["hour_cos"]  = np.cos(2 * np.pi * df["hour"] / 24)
-    df["dow_sin"]   = np.sin(2 * np.pi * df["dayofweek"] / 7)
-    df["dow_cos"]   = np.cos(2 * np.pi * df["dayofweek"] / 7)
-    df["lag_1h"]    = df["volume"].shift(1)
-    df["lag_24h"]   = df["volume"].shift(24)
-    df["lag_168h"]  = df["volume"].shift(168)
-    df["roll_24h_mean"] = df["volume"].shift(1).rolling(24).mean()
-    return df.dropna()
+KB_PATH     = os.path.join(BASE_DIR, "knowledge", "ev_planning_guidelines.txt")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Helper functions
+# ═══════════════════════════════════════════════════════════════════════════
+
 @st.cache_data
 def load_zone_data():
+    """Load the main zone-hourly demand dataset."""
     if not os.path.exists(ZONE_CSV):
         return None
-    df = pd.read_csv(ZONE_CSV)
-    df["time"] = pd.to_datetime(df["time"])
-    df["hour"]      = df["time"].dt.hour
-    df["dayofweek"] = df["time"].dt.dayofweek
-    df["month"]     = df["time"].dt.month
-    return df
+    try:
+        df = pd.read_csv(ZONE_CSV)
+        df["time"] = pd.to_datetime(df["time"])
+        # Add basic time components for filtering/display
+        df["hour"]      = df["time"].dt.hour
+        df["dayofweek"] = df["time"].dt.dayofweek
+        df["month"]     = df["time"].dt.month
+        return df
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return None
+
+
 @st.cache_data
 def load_results():
+    """Load pre-computed model metrics."""
     if not os.path.exists(RESULTS_CSV):
         return None
     return pd.read_csv(RESULTS_CSV)
-@st.cache_data
-def load_station_info():
-    if not os.path.exists(STATION_INFO_PATH):
-        return None
-    return pd.read_csv(STATION_INFO_PATH)
-@st.cache_data
-def train_zone_model(zone_id: int):
+
+
+@st.cache_resource
+def get_trained_model(zone_id: int, model_type: str = "Ridge"):
+    """
+    Train a CVDemandModel for a specific zone.
+    Cached as a resource to avoid re-training on every interaction.
+    """
     df = load_zone_data()
     if df is None:
-        return None, None, None, None
-    zdf = (\
-        df[df["TAZID"] == zone_id]\
-        .copy()\
-        .sort_values("time")\
-        .set_index("time")\
+        return None, None
+        
+    zdf = (
+        df[df["TAZID"] == zone_id]
+        .copy().sort_values("time").set_index("time")
     )
-    zdf = add_features(zdf)
+    
     if len(zdf) < 200:
-        return None, None, None, None
-    X, y = zdf[FEATURES], zdf["volume"]
-    split = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split], X.iloc[split:]
-    y_train, y_test = y.iloc[:split], y.iloc[split:]
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-    y_pred = np.maximum(model.predict(X_test), 0)
-    return y_test, y_pred, model, zdf
-st.set_page_config(\
-    page_title="EV Charging Demand Predictor",\
-    page_icon="",\
-    layout="wide",\
+        return None, None
+        
+    model = CVDemandModel(model_type=model_type)
+    metrics = model.train_with_cv(zdf)
+    return model, zdf
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Page setup
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.set_page_config(
+    page_title="ChargeWise AI",
+    page_icon="CW",
+    layout="wide",
 )
-\
-\
-st.markdown(\
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .metric-card {
-        background: linear-gradient(135deg,#1e3c72,#2a5298);
-        padding: 20px 24px; border-radius: 12px; color: white;
-        text-align: center; margin-bottom: 8px;
-    }
-    .metric-card h3 { font-size: 2rem; margin: 0; }
-    .metric-card p  { margin: 0; font-size: 0.85rem; opacity: .8; }
-    .stTabs [data-baseweb="tab"] { font-size: 1rem; font-weight: 600; }
-    </style>
-    """,\
-    unsafe_allow_html=True,\
-)
-\
-st.title(" EV Charging Demand Prediction Dashboard")
-st.caption("Milestone 1 · UrbanEVDataset (Shenzhen) · Sep 2022 – Feb 2023")
-\
-\
+
+# Premium CSS Styling
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Outfit', sans-serif; }
+
+.metric-card {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    padding: 24px; border-radius: 16px; color: white;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    text-align: center; margin-bottom: 12px;
+}
+.metric-card h3 { font-size: 2.2rem; margin: 0; font-weight: 700; }
+.metric-card p  { margin: 5px 0 0 0; font-size: 0.9rem; opacity: 0.85; text-transform: uppercase; letter-spacing: 1px; }
+
+.report-card {
+    background: #ffffff;
+    border-left: 5px solid #2a5298;
+    padding: 20px; border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+    margin-bottom: 16px;
+}
+.report-card h4 { color: #1e3c72; margin-top: 0; font-weight: 600; }
+
+.state-badge {
+    display: inline-block;
+    padding: 6px 16px; border-radius: 30px;
+    font-size: 0.85rem; font-weight: 600;
+    background: #e8f0fe; color: #1e3c72;
+    border: 1px solid #d2e3fc;
+}
+.warning-box {
+    background: #fff9e6; border-left: 5px solid #ffcc00;
+    padding: 12px 16px; border-radius: 8px; margin-bottom: 12px;
+    font-size: 0.9rem; color: #856404;
+}
+.stTabs [data-baseweb="tab"] { font-size: 1.1rem; font-weight: 600; padding-top: 10px; padding-bottom: 10px; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("ChargeWise AI")
+st.caption("Advanced EV Charging Demand Analytics & Agentic Infrastructure Planning")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sidebar
+# ═══════════════════════════════════════════════════════════════════════════
+
 with st.sidebar:
-    st.header(" Settings")
+    st.markdown(
+        '<div style="background:linear-gradient(135deg,#1e3c72,#2a5298);color:white;'
+        'padding:12px 16px;border-radius:12px;text-align:center;font-weight:700;'
+        'font-size:1.1rem;margin-bottom:12px;">CW &mdash; ChargeWise AI</div>',
+        unsafe_allow_html=True
+    )
+    st.header("Control Panel")
+    
     zone_data = load_zone_data()
     data_ready = zone_data is not None
-    \
+
     if data_ready:
         zones = sorted(zone_data["TAZID"].unique().tolist())
-        sel_zone = st.selectbox("Select Zone (TAZID)", zones, index=min(5, len(zones)-1))
-        st.caption(" Model: Linear Regression")
-        st.markdown("---")
-        st.markdown(\
-            "**Pipeline**\n" \
-            "1. Raw 5-min CSVs (per station)\n" \
-            "2. Gap-fill (ffill/bfill)\n" \
-            "3. Hourly resampling\n" \
-            "4. Zone aggregation\n" \
-            "5. Feature engineering\n" \
-            "6. Train / Predict (80/20)\n" \
-            "7. MAE & RMSE evaluation"\
-        )
+        sel_zone = st.selectbox("Current Zone Focus (TAZID)", zones, index=min(5, len(zones) - 1))
+        st.success(f"Data Loaded: {len(zone_data):,} records")
     else:
-        st.warning(\
-            "Processed data not found. " \
-            "Please run preprocessing.ipynb first to generate `processed/zone_hourly_volume_long.csv`."\
-        )
+        st.warning("Processed data not found. Please run preprocessing first.")
         sel_zone = None
-tab1, tab2, tab3, tab4 = st.tabs(\
-    [" Overview", " Zone Prediction", " Peak Demand", " Model Results"]\
-)
-\
-\
-\
-\
-with tab1:
-    if not data_ready:
-        st.info("Run preprocessing.ipynb then restart the app.")
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        total_kwh   = zone_data["volume"].sum()
-        num_zones   = zone_data["TAZID"].nunique()
-        date_range  = f"{zone_data['time'].min().date()} → {zone_data['time'].max().date()}"
-        avg_hourly  = zone_data.groupby("time")["volume"].sum().mean()
-        \
-        for col, val, label in [\
-            (c1, f"{total_kwh:,.0f} kWh", "Total Energy (all zones)"),\
-            (c2, f"{num_zones}", "Unique Zones"),\
-            (c3, f"{avg_hourly:.1f} kWh", "Avg Hourly Demand"),\
-            (c4, date_range, "Dataset Period"),\
-        ]:
-            col.markdown(\
-                f'<div class="metric-card"><h3>{val}</h3><p>{label}</p></div>',\
-                unsafe_allow_html=True,\
-            )
-        st.markdown("###  Total Demand Over Time (All Zones)")
-        total_over_time = zone_data.groupby("time")["volume"].sum()
-        fig, ax = plt.subplots(figsize=(14, 3))
-        ax.plot(total_over_time.index, total_over_time.values, color="#2a5298", lw=0.8)
-        ax.fill_between(total_over_time.index, total_over_time.values, alpha=0.15, color="#2a5298")
-        ax.set_ylabel("kWh"); ax.set_xlabel("Time"); ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        st.pyplot(fig)
-        \
-        st.markdown("###  Demand Patterns")
-        col1, col2, col3 = st.columns(3)
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        \
-        fig1, ax1 = plt.subplots(figsize=(5, 4))
-        zone_data.groupby("hour")["volume"].mean().plot(kind="bar", ax=ax1, color="steelblue", edgecolor="white")
-        ax1.set_title("Avg Demand by Hour"); ax1.set_xlabel("Hour"); ax1.set_ylabel("kWh")
-        fig1.tight_layout(); col1.pyplot(fig1)
-        \
-        fig2, ax2 = plt.subplots(figsize=(5, 4))
-        zone_data.groupby("dayofweek")["volume"].mean().plot(kind="bar", ax=ax2, color="darkorange", edgecolor="white")
-        ax2.set_xticklabels(days, rotation=45)
-        ax2.set_title("Avg Demand by Day"); ax2.set_xlabel("Day"); ax2.set_ylabel("kWh")
-        fig2.tight_layout(); col2.pyplot(fig2)
-        \
-        fig3, ax3 = plt.subplots(figsize=(5, 4))
-        zone_data.groupby("month")["volume"].mean().plot(kind="bar", ax=ax3, color="seagreen", edgecolor="white")
-        ax3.set_title("Avg Demand by Month"); ax3.set_xlabel("Month"); ax3.set_ylabel("kWh")
-        fig3.tight_layout(); col3.pyplot(fig3)
-with tab2:
-    if not data_ready:
-        st.info("Run preprocessing.ipynb then restart the app.")
-    else:
-        st.subheader(f"Zone {sel_zone} — Demand Forecast (Linear Regression)")
-        with st.spinner("Training model …"):
-            y_test, y_pred, model, zdf = train_zone_model(sel_zone)
-        if y_test is None:
-            st.warning("Not enough data for this zone.")
-        else:
-            mae  = mean_absolute_error(y_test, y_pred)
-            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-            \
-            m1, m2, m3 = st.columns(3)
-            m1.metric("MAE",  f"{mae:.2f} kWh")
-            m2.metric("RMSE", f"{rmse:.2f} kWh")
-            m3.metric("Test samples", f"{len(y_test):,}")
-            \
-            fig, ax = plt.subplots(figsize=(14, 4))
-            ax.plot(y_test.index, y_test.values, label="Actual", color="royalblue", lw=1.5)
-            ax.plot(y_test.index, y_pred,        label="Predicted", color="tomato",\
-                    linestyle="--", lw=1.2)
-            ax.set_title(f"Zone {sel_zone} — Actual vs Predicted (Test Set)")
-            ax.set_ylabel("kWh"); ax.legend(); ax.grid(True, alpha=0.3)
-            fig.tight_layout(); st.pyplot(fig)
-            \
-\
-            residuals = y_test.values - y_pred
-            fig2, axes = plt.subplots(1, 2, figsize=(12, 3))
-            axes[0].hist(residuals, bins=40, color="slategray", edgecolor="white")
-            axes[0].set_title("Residual Distribution"); axes[0].set_xlabel("Error (kWh)")
-            axes[1].scatter(y_pred, residuals, alpha=0.3, s=10, color="slategray")
-            axes[1].axhline(0, color="red", lw=1)
-            axes[1].set_title("Residuals vs Predicted"); axes[1].set_xlabel("Predicted kWh")
-            axes[1].set_ylabel("Residual")
-            fig2.tight_layout(); st.pyplot(fig2)
-with tab3:
-    if not data_ready:
-        st.info("Run preprocessing.ipynb then restart the app.")
-    else:
-        st.subheader(f" Peak Demand Analysis — Zone {sel_zone}")
-        _, _, _, zdf = train_zone_model(sel_zone)
-        \
-        if zdf is None:
-            st.warning("Not enough data.")
-        else:
-            \
-            pivot = zdf.pivot_table(\
-                values="volume", index="hour", columns="dayofweek", aggfunc="mean"\
-            )
-            pivot.columns = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            \
-            st.markdown("#### Demand Heatmap (Hour × Day)")
-            fig, ax = plt.subplots(figsize=(10, 7))
-            sns.heatmap(pivot, cmap="YlOrRd", ax=ax, linewidths=0.3, annot=True, fmt=".0f")
-            ax.set_title(f"Zone {sel_zone} — Avg kWh")
-            ax.set_ylabel("Hour of Day"); ax.set_xlabel("Day")
-            fig.tight_layout(); st.pyplot(fig)
-            \
-            st.markdown("#### Top 10 Peak Hours")
-            top10 = zdf["volume"].nlargest(10).reset_index()
-            top10.columns = ["Timestamp", "Volume (kWh)"]
-            st.dataframe(top10, use_container_width=True)
-            \
-\
-            zdf_copy = zdf.copy()
-            fig2, ax2 = plt.subplots(figsize=(10, 4))
-            for label, grp in zdf_copy.groupby("is_weekend"):
-                name = "Weekend" if label else "Weekday"
-                grp.groupby("hour")["volume"].mean().plot(\
-                    ax=ax2, label=name, linewidth=2, marker="o", markersize=4\
-                )
-            ax2.set_title(f"Zone {sel_zone} — Avg Hourly Demand: Weekday vs Weekend")
-            ax2.set_xlabel("Hour"); ax2.set_ylabel("Avg kWh")
-            ax2.legend(); ax2.grid(True, alpha=0.3)
-            fig2.tight_layout(); st.pyplot(fig2)
-with tab4:
-    st.subheader(" Prediction Accuracy — All Zones")
-    results_df = load_results()
-    if results_df is None:
-        st.info("Run preprocessing.ipynb (cells 10–11) to generate `zone_model_results.csv`.")
-    else:
-        lr_df = results_df[results_df["model"] == "LinearRegression"]
-        summary = lr_df[["MAE", "RMSE"]].agg(["mean", "median", "std"])
-        st.markdown("#### Summary Statistics (Linear Regression)")
-        st.dataframe(summary.round(3), use_container_width=True)
-        \
-        col1, col2 = st.columns(2)
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
-        lr_df["MAE"].hist(bins=30, ax=ax1, color="steelblue", edgecolor="white")
-        ax1.set_title("MAE Distribution"); ax1.set_xlabel("MAE (kWh)")
-        fig1.tight_layout(); col1.pyplot(fig1)
-        \
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
-        lr_df["RMSE"].hist(bins=30, ax=ax2, color="darkorange", edgecolor="white")
-        ax2.set_title("RMSE Distribution"); ax2.set_xlabel("RMSE (kWh)")
-        fig2.tight_layout(); col2.pyplot(fig2)
-        \
-        st.markdown("#### All Zone Results (Linear Regression)")
-        st.dataframe(\
-            lr_df.sort_values("RMSE").round(3),\
-            use_container_width=True,\
-            height=400,\
-        )
-        \
-\
-        st.download_button(\
-            " Download Results CSV",\
-            data=lr_df.to_csv(index=False),\
-            file_name="zone_model_results.csv",\
-            mime="text/csv",\
-        )
-    st.markdown("---")
-    st.subheader(" Upload EV Charging Data (Optional)")
-    uploaded = st.file_uploader(\
-        "Upload a station CSV (must have columns: time, volume)", type="csv"\
+
+    # API key loaded silently from .env or environment
+    gemini_api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_api_key:
+        try: gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+        except: pass
+
+    st.divider()
+    st.info(
+        "**ChargeWise Pipeline**\n\n"
+        "1.  **Data Ingestion**: Raw station-level telemetry\n"
+        "2.  **Gap Analysis**: Auto-fill missing sensor data\n"
+        "3.  **Featurization**: Cyclical time series encoding\n"
+        "4.  **Modeling**: Time-Series Aware Ridge Regression\n"
+        "5.  **Validation**: 5-Fold Temporal Cross-Validation\n"
+        "6.  **Agentic Planning**: RAG-based expansion strategy"
     )
-    if uploaded:
-        udf = pd.read_csv(uploaded)
-        if "time" not in udf.columns or "volume" not in udf.columns:
-            st.error("CSV must have 'time' and 'volume' columns.")
-        else:
-            udf["time"] = pd.to_datetime(udf["time"])
-            udf = udf.sort_values("time").set_index("time")
-            udf = add_features(udf)
-            if len(udf) < 50:
-                st.warning("Not enough rows after feature engineering (need ≥200).")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Main Content Tabs
+# ═══════════════════════════════════════════════════════════════════════════
+
+tabs = st.tabs([
+    "Overview",
+    "Zone Forecasting",
+    "Infrastructure Planning",
+    "Load Hotspots",
+    "Model Performance",
+    "AI Planning Agent",
+])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 1 — OVERVIEW
+# ══════════════════════════════════════════════════════════════════════════
+
+with tabs[0]:
+    if not data_ready:
+        st.info("Welcome! Please ensure the processed data is available in the `./processed/` directory.")
+    else:
+        # High-level Metrics
+        c1, c2, c3, c4 = st.columns(4)
+        total_kwh  = zone_data["volume"].sum()
+        num_zones  = zone_data["TAZID"].nunique()
+        date_range = f"{zone_data['time'].min().date()} to {zone_data['time'].max().date()}"
+        avg_hourly = zone_data.groupby("time")["volume"].sum().mean()
+
+        metrics = [
+            (c1, f"{total_kwh:,.0f} kWh", "Total Energy Delivered"),
+            (c2, f"{num_zones}", "Operational Zones"),
+            (c3, f"{avg_hourly:.1f} kWh", "Avg Sysem-wide Hourly Demand"),
+            (c4, date_range, "Observation Period"),
+        ]
+        for col, val, label in metrics:
+            col.markdown(f'<div class="metric-card"><h3>{val}</h3><p>{label}</p></div>', unsafe_allow_html=True)
+
+        st.markdown("### Aggregated System Demand")
+        tot = zone_data.groupby("time")["volume"].sum()
+        fig, ax = plt.subplots(figsize=(14, 4))
+        ax.plot(tot.index, tot.values, color="#1e3c72", lw=1, alpha=0.8)
+        ax.fill_between(tot.index, tot.values, alpha=0.1, color="#1e3c72")
+        ax.set_ylabel("Demand (kWh)"); ax.grid(True, alpha=0.2); sns.despine()
+        st.pyplot(fig)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### Demand by Hour of Day")
+            fig_h, ax_h = plt.subplots(figsize=(8, 5))
+            sns.barplot(data=zone_data, x="hour", y="volume", ax=ax_h, palette="viridis", errorbar=None)
+            ax_h.set_ylabel("Avg kWh"); sns.despine(); st.pyplot(fig_h)
+
+        with col2:
+            st.markdown("#### Demand by Day of Week")
+            fig_d, ax_d = plt.subplots(figsize=(8, 5))
+            days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            sns.barplot(data=zone_data, x="dayofweek", y="volume", ax=ax_d, palette="magma", errorbar=None)
+            ax_d.set_xticklabels(days); ax_d.set_ylabel("Avg kWh"); sns.despine(); st.pyplot(fig_d)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 2 — ZONE FORECASTING
+# ══════════════════════════════════════════════════════════════════════════
+
+with tabs[1]:
+    if not data_ready:
+        st.stop()
+    
+    st.subheader(f"Demand Forecasting - Zone {sel_zone}")
+    
+    model, zdf = get_trained_model(sel_zone)
+    
+    if model is None:
+        st.warning("Insufficient historical data for this zone (minimum 200 hours required).")
+    else:
+        # Forecast Visuals
+        col_main, col_side = st.columns([3, 1])
+        
+        with col_main:
+            # Show actual vs predicted on hold-out set
+            X, y = model.prepare_data(zdf)
+            split = int(len(X) * 0.8)
+            X_test, y_test = X.iloc[split:], y.iloc[split:]
+            
+            preds_df = model.predict_with_interval(X_test)
+            
+            fig, ax = plt.subplots(figsize=(12, 6))
+            # Just show the last 168 hours (one week) for clarity
+            display_slice = -168
+            t_idx = y_test.index[display_slice:]
+            
+            ax.plot(t_idx, y_test.values[display_slice:], label="Actual", color="#1e3c72", lw=2)
+            ax.plot(t_idx, preds_df["prediction"].values[display_slice:], label="Predicted", color="#e74c3c", linestyle="--")
+            ax.fill_between(
+                t_idx, 
+                preds_df["lower_bound"].values[display_slice:], 
+                preds_df["upper_bound"].values[display_slice:], 
+                color="#e74c3c", alpha=0.15, label="95% Confidence Interval"
+            )
+            ax.legend(); ax.grid(True, alpha=0.2); ax.set_ylabel("kWh")
+            st.pyplot(fig)
+            
+        with col_side:
+            st.markdown("#### Future Prediction")
+            st.write("Input a future date to predict demand.")
+            target_date = st.date_input("Target Date", value=datetime.now() + timedelta(days=1))
+            target_hour = st.slider("Target Hour", 0, 23, 12)
+            
+            # Construct a dummy timestamp for feature generation
+            target_ts = pd.Timestamp(datetime.combine(target_date, time(target_hour)))
+            
+            # For purely future prediction without lags, we'll use the last known values as proxies
+            # (In a production system, we'd use recursive forecasting)
+            future_df = pd.DataFrame(index=[target_ts])
+            # Add features (temporal only)
+            future_df["hour"] = future_df.index.hour
+            future_df["dayofweek"] = future_df.index.dayofweek
+            future_df["month"] = future_df.index.month
+            future_df["is_weekend"] = (future_df.index.dayofweek >= 5).astype(int)
+            future_df["season"] = future_df["month"].map(
+                {12: 0, 1: 0, 2: 0, 3: 1, 4: 1, 5: 1, 6: 2, 7: 2, 8: 2, 9: 3, 10: 3, 11: 3}
+            )
+            future_df["hour_sin"] = np.sin(2 * np.pi * future_df["hour"] / 24)
+            future_df["hour_cos"] = np.cos(2 * np.pi * future_df["hour"] / 24)
+            future_df["dow_sin"] = np.sin(2 * np.pi * future_df["dayofweek"] / 7)
+            future_df["dow_cos"] = np.cos(2 * np.pi * future_df["dayofweek"] / 7)
+            
+            # For simplicity in this demo, we'll fill lags with mean historical values
+            future_df["lag_1h"] = y.mean()
+            future_df["lag_24h"] = y.mean()
+            future_df["lag_168h"] = y.mean()
+            future_df["roll_24h_mean"] = y.mean()
+            
+            future_pred = model.predict_with_interval(future_df)
+            
+            st.metric("Predicted Demand", f"{future_pred['prediction'][0]:.2f} kWh")
+            st.caption(f"Range: {future_pred['lower_bound'][0]:.1f} - {future_pred['upper_bound'][0]:.1f} kWh")
+            st.info("Note: Future predictions use historical means for lag features.")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 3 — INFRASTRUCTURE PLANNING
+# ══════════════════════════════════════════════════════════════════════════
+
+with tabs[2]:
+    st.subheader("Infrastructure Planning Visualizations")
+    st.markdown("Use these maps to identify priority zones and peak-hour requirements.")
+    
+    if data_ready:
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            sel_zones_multi = st.multiselect(
+                "Filter Zones for Heatmap", 
+                options=zones, 
+                default=zones[:min(10, len(zones))]
+            )
+            agg_type = st.radio("Aggregation", ["Mean Hourly Demand", "Peak Hourly Demand"])
+        
+        with col2:
+            subset = zone_data[zone_data["TAZID"].isin(sel_zones_multi)]
+            if not subset.empty:
+                agg_func = "mean" if "Mean" in agg_type else "max"
+                pivot = subset.pivot_table(
+                    values="volume", 
+                    index="TAZID", 
+                    columns="hour", 
+                    aggfunc=agg_func
+                )
+                
+                fig, ax = plt.subplots(figsize=(10, 6))
+                sns.heatmap(pivot, cmap="YlOrRd", annot=False, cbar_kws={'label': 'kWh'})
+                ax.set_title(f"{agg_type} by Zone and Hour")
+                ax.set_xlabel("Hour of Day"); ax.set_ylabel("Zone (TAZID)")
+                st.pyplot(fig)
             else:
-                X, y = udf[FEATURES], udf["volume"]
-                split = int(len(X) * 0.8)
-                X_tr, X_te = X.iloc[:split], X.iloc[split:]
-                y_tr, y_te = y.iloc[:split], y.iloc[split:]
-                mdl = LinearRegression()
-                mdl.fit(X_tr, y_tr)
-                y_pr = np.maximum(mdl.predict(X_te), 0)
-                mae_u  = mean_absolute_error(y_te, y_pr)
-                rmse_u = np.sqrt(mean_squared_error(y_te, y_pr))
-                \
-                st.success(f" Model trained  |  MAE: {mae_u:.2f} kWh  |  RMSE: {rmse_u:.2f} kWh")
-                \
-                fig_u, ax_u = plt.subplots(figsize=(14, 4))
-                ax_u.plot(y_te.index, y_te.values, label="Actual", color="royalblue")
-                ax_u.plot(y_te.index, y_pr, label="Predicted", color="tomato", linestyle="--")
-                ax_u.set_title("Uploaded Data — Actual vs Predicted")
-                ax_u.legend(); ax_u.grid(True, alpha=0.3)
-                fig_u.tight_layout(); st.pyplot(fig_u)
+                st.info("Select zones to generate heatmap.")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 4 — LOAD HOTSPOTS
+# ══════════════════════════════════════════════════════════════════════════
+
+with tabs[3]:
+    if not data_ready:
+        st.stop()
+        
+    st.subheader(f"Peak Load Analysis - Zone {sel_zone}")
+    _, zdf = get_trained_model(sel_zone)
+    
+    if zdf is not None:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Demand Intensity (Hour × Day)")
+            pivot = zdf.pivot_table(values="volume", index="hour", columns="dayofweek", aggfunc="mean")
+            pivot.columns = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(pivot, cmap="inferno", ax=ax, annot=True, fmt=".1f")
+            st.pyplot(fig)
+            
+        with c2:
+            st.markdown("#### Weekday vs Weekend Profile")
+            fig2, ax2 = plt.subplots(figsize=(8, 6))
+            zdf["is_weekend"] = (zdf.index.dayofweek >= 5)
+            sns.lineplot(data=zdf, x="hour", y="volume", hue="is_weekend", ax=ax2, palette="cool")
+            ax2.legend(["Weekday", "Weekend"]); ax2.grid(True, alpha=0.2)
+            st.pyplot(fig2)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 5 — MODEL PERFORMANCE
+# ══════════════════════════════════════════════════════════════════════════
+
+with tabs[4]:
+    st.subheader("Model Robustness & Accuracy")
+    results_df = load_results()
+    
+    if results_df is None:
+        st.warning("Please run `preprocess_run.py` to generate the global performance data.")
+    else:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Average MAE", f"{results_df['MAE'].mean():.2f} kWh")
+        m2.metric("Average R²", f"{results_df['R2'].mean():.2f}")
+        m3.metric("Zones Evaluated", len(results_df))
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### Error Distribution (MAE)")
+            fig1, ax1 = plt.subplots(figsize=(8, 5))
+            sns.histplot(results_df["MAE"], bins=20, kde=True, color="steelblue", ax=ax1)
+            st.pyplot(fig1)
+            
+        with col2:
+            st.markdown("#### R² Distribution (Robustness)")
+            fig2, ax2 = plt.subplots(figsize=(8, 5))
+            sns.histplot(results_df["R2"], bins=20, kde=True, color="seagreen", ax=ax2)
+            st.pyplot(fig2)
+            
+        st.markdown("#### Full Benchmark Results")
+        st.dataframe(results_df.sort_values("R2", ascending=False), use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 6 — AI PLANNING AGENT
+# ══════════════════════════════════════════════════════════════════════════
+
+with tabs[5]:
+    st.subheader("AI Planning Assistant")
+    st.caption("Strategic expansion recommendations based on demand patterns and local constraints.")
+
+    if not data_ready:
+        st.stop()
+
+    # Reuse existing agent logic from previous version
+    st.markdown("#### Select Zones for Site Report")
+    agent_zones = st.multiselect(
+        "TAZID(s)", options=zones, default=[sel_zone] if sel_zone else []
+    )
+
+    if not gemini_api_key:
+        st.error("API Key Required. Please provide your Gemini API key in the sidebar.")
+    elif st.button("Generate Strategic Report", type="primary"):
+        # Import agent modules lazily
+        try:
+            from agent.rag import get_knowledge_base
+            from agent.planning_agent import PlanningAgent
+            from agent.pdf_export import generate_pdf
+        except ImportError as e:
+            st.error(f"Missing modules: {e}")
+            st.stop()
+            
+        with st.spinner("Analyzing demand architecture..."):
+            # Compute stats for selected cluster
+            stats = compute_stats(agent_zones, ZONE_CSV)
+            kb = get_knowledge_base(KB_PATH)
+            chunks = kb.retrieve_for_stats(stats)
+            
+            agent = PlanningAgent(api_key=gemini_api_key)
+            report = agent.run(stats, chunks)
+            
+            st.success("Analysis Complete!")
+            
+            # Display results
+            st.markdown(f'<div class="report-card"><h4>Demand Summary</h4>{report.demand_summary}</div>', unsafe_allow_html=True)
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("#### Recommended Expansion")
+                for rec in report.expansion_recommendations:
+                    st.write(f"- {rec}")
+            with col_b:
+                st.markdown("#### Grid Balancing Insights")
+                for ins in report.scheduling_insights:
+                    st.write(f"- {ins}")
+            
+            # PDF Download
+            st.divider()
+            stats_dict = {
+                "Target Zones": ", ".join(str(z) for z in agent_zones),
+                "Total Energy": f"{stats.total_kwh:,.0f} kWh",
+                "Peak Load Hour": f"{stats.peak_hour}:00",
+                "Data Quality": stats.data_quality.upper()
+            }
+            pdf_bytes = generate_pdf(report, zone_ids=agent_zones, stats_dict=stats_dict)
+            st.download_button("Download Planning Document (PDF)", data=pdf_bytes, file_name="chargewise_report.pdf", mime="application/pdf")
